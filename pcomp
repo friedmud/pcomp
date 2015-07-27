@@ -1,0 +1,77 @@
+import threading
+import SocketServer
+import struct
+import argparse
+import sys
+import subprocess
+import tempfile
+import os
+from copy import deepcopy
+
+# Local stuff
+from utils import *
+from server import *
+
+def remoteCompile(compile_command):
+  '''
+      Receives the compile command as a list of individual entities.
+      Preprocess the file first
+      Sends it off to a remote machine to be compiled and then receives the .o
+  '''
+
+  preprocess_command = ' '.join(compile_command) + ' -E'
+
+  preprocess_output = subprocess.check_output(preprocess_command, shell=True)
+
+  # Connect to the server
+  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  s.connect((ip, port))
+
+  # Send the preprocessed output
+  send_msg(s, preprocess_output)
+
+  # Get a "clean" compile command (a compile command without the file name to be compiled)
+  clean_compile_command = [x for x in compile_command if '.C' not in x]
+
+  send_msg(s, ' '.join(clean_compile_command))
+
+  # Receive the status of the compile job
+  status = recv_msg(s)
+
+  if status == '1': #Something went wrong, try to compile it here
+    # Receive the error message
+    error_message = recv_msg(s)
+
+    print '\nError compiling on', ip, ':'
+    print error_message
+    print '\nRetrying locally'
+
+    try:
+      compile_output = subprocess.check_output(' '.join(compile_command), stderr=subprocess.STDOUT, shell=True)
+    except subprocess.CalledProcessError as e:
+      print e.output
+
+  # Clean up
+  s.close()
+
+
+if __name__ == '__main__':
+  import socket
+  import threading
+
+  parser = argparse.ArgumentParser(description='Parallel Compile Tool')
+
+  parser.add_argument('command', type=str, nargs=argparse.REMAINDER, help='The compile command to run')
+
+  args = parser.parse_args()
+
+  compile_command = args.command
+
+  # See if we're trying to run clang
+  if compile_command[0] == 'clang' or compile_command[0] == 'clang++':
+    if any('.C' in x for x in compile_command):
+      remoteCompile(compile_command)
+  else:
+    raise Exception('Can only be used with clang!')
+
+#  server.socket.close()
